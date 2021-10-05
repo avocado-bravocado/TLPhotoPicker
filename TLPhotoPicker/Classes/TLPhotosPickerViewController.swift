@@ -19,8 +19,8 @@ public protocol TLPhotosPickerViewControllerDelegate: class {
     func photoPickerDidCancel()
     func canSelectAsset(phAsset: PHAsset) -> Bool
     func didExceedMaximumNumberOfSelection(picker: TLPhotosPickerViewController)
-    func handleNoAlbumPermissions(picker: TLPhotosPickerViewController)
-    func handleNoCameraPermissions(picker: TLPhotosPickerViewController)
+    func handleNoAlbumPermissions(picker: TLPhotosPickerViewController, afterRequestAuthorization: Bool)
+    func handleNoCameraPermissions(picker: TLPhotosPickerViewController, afterRequestAuthorization: Bool)
 }
 
 extension TLPhotosPickerViewControllerDelegate {
@@ -32,8 +32,8 @@ extension TLPhotosPickerViewControllerDelegate {
     public func photoPickerDidCancel() { }
     public func canSelectAsset(phAsset: PHAsset) -> Bool { return true }
     public func didExceedMaximumNumberOfSelection(picker: TLPhotosPickerViewController) { }
-    public func handleNoAlbumPermissions(picker: TLPhotosPickerViewController) { }
-    public func handleNoCameraPermissions(picker: TLPhotosPickerViewController) { }
+    public func handleNoAlbumPermissions(picker: TLPhotosPickerViewController, afterRequestAuthorization: Bool) { }
+    public func handleNoCameraPermissions(picker: TLPhotosPickerViewController, afterRequestAuthorization: Bool) { }
 }
 
 //for log
@@ -181,8 +181,8 @@ open class TLPhotosPickerViewController: UIViewController {
     }
     @objc open var canSelectAsset: ((PHAsset) -> Bool)? = nil
     @objc open var didExceedMaximumNumberOfSelection: ((TLPhotosPickerViewController) -> Void)? = nil
-    @objc open var handleNoAlbumPermissions: ((TLPhotosPickerViewController) -> Void)? = nil
-    @objc open var handleNoCameraPermissions: ((TLPhotosPickerViewController) -> Void)? = nil
+    @objc open var handleNoAlbumPermissions: ((TLPhotosPickerViewController, Bool) -> Void)? = nil
+    @objc open var handleNoCameraPermissions: ((TLPhotosPickerViewController, Bool) -> Void)? = nil
     @objc open var dismissCompletion: (() -> Void)? = nil
     private var completionWithPHAssets: (([PHAsset]) -> Void)? = nil
     private var completionWithTLPHAssets: (([TLPHAsset]) -> Void)? = nil
@@ -262,7 +262,7 @@ open class TLPhotosPickerViewController: UIViewController {
         self.photoLibrary.fetchCollection(configure: self.configure)
     }
     
-    private func processAuthorization(status: PHAuthorizationStatus) {
+    private func processAuthorization(status: PHAuthorizationStatus, afterRequestAuthorization: Bool = false) {
         switch status {
         case .notDetermined:
             requestAuthorization()
@@ -271,7 +271,9 @@ open class TLPhotosPickerViewController: UIViewController {
         case .authorized:
             loadPhotos(limitMode: false)
         case .restricted, .denied:
-            handleDeniedAlbumsAuthorization()
+            handleDeniedAlbumsAuthorization(afterRequestAuthorization: afterRequestAuthorization)
+            loadPhotos(limitMode: false)
+
         @unknown default:
             break
         }
@@ -280,11 +282,11 @@ open class TLPhotosPickerViewController: UIViewController {
     private func requestAuthorization() {
         if #available(iOS 14.0, *) {
             PHPhotoLibrary.requestAuthorization(for:  .readWrite) { [weak self] status in
-                self?.processAuthorization(status: status)
+                self?.processAuthorization(status: status, afterRequestAuthorization: true)
             }
         } else {
             PHPhotoLibrary.requestAuthorization { [weak self] status in
-                self?.processAuthorization(status: status)
+                self?.processAuthorization(status: status, afterRequestAuthorization: true)
             }
         }
     }
@@ -591,7 +593,17 @@ extension TLPhotosPickerViewController: TLPhotoLibraryDelegate {
     }
     
     func loadCompleteAllCollection(collections: [TLAssetsCollection]) {
-        self.collections = collections
+        if collections.isEmpty && configure.usedCameraButton {
+            var emptyCollections: [TLAssetsCollection] = []
+            emptyCollections.append(TLAssetsCollection(collection: PHAssetCollection()))
+            emptyCollections[0].useCameraButton = true
+            self.collections = emptyCollections
+            self.titleView.isHidden = true
+        } else {
+            self.collections = collections
+            self.titleView.isHidden = false
+        }
+        
         self.focusFirstCollection()
         let isEmpty = self.collections.count == 0
         self.subTitleStackView.isHidden = isEmpty
@@ -616,12 +628,12 @@ extension TLPhotosPickerViewController: UIImagePickerControllerDelegate, UINavig
                     if authorized {
                         self?.showCamera()
                     } else {
-                        self?.handleDeniedCameraAuthorization()
+                        self?.handleDeniedCameraAuthorization(afterRequestAuthorization: true)
                     }
                 }
             })
         case .restricted, .denied:
-            self.handleDeniedCameraAuthorization()
+            self.handleDeniedCameraAuthorization(afterRequestAuthorization: false)
         @unknown default:
             break
         }
@@ -652,17 +664,17 @@ extension TLPhotosPickerViewController: UIImagePickerControllerDelegate, UINavig
         self.present(picker, animated: true, completion: nil)
     }
 
-    private func handleDeniedAlbumsAuthorization() {
+    private func handleDeniedAlbumsAuthorization(afterRequestAuthorization: Bool) {
         DispatchQueue.main.async {
-            self.delegate?.handleNoAlbumPermissions(picker: self)
-            self.handleNoAlbumPermissions?(self)
+            self.delegate?.handleNoAlbumPermissions(picker: self, afterRequestAuthorization: afterRequestAuthorization)
+            self.handleNoAlbumPermissions?(self, afterRequestAuthorization)
         }
     }
     
-    private func handleDeniedCameraAuthorization() {
+    private func handleDeniedCameraAuthorization(afterRequestAuthorization: Bool) {
         DispatchQueue.main.async {
-            self.delegate?.handleNoCameraPermissions(picker: self)
-            self.handleNoCameraPermissions?(self)
+            self.delegate?.handleNoCameraPermissions(picker: self, afterRequestAuthorization: afterRequestAuthorization)
+            self.handleNoCameraPermissions?(self, afterRequestAuthorization)
         }
     }
     
